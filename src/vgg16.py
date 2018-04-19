@@ -150,6 +150,9 @@ def create_model(img_dim=(128, 128, 3)):
                        weights='imagenet',
                        input_shape=img_dim)
     
+    for layer in base_model.layers[:8]:
+       layer.trainable = False
+       
     bn = BatchNormalization()(input_tensor)
     x = base_model(bn)
     x = Flatten()(x)
