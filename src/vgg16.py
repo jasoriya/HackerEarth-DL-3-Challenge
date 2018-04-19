@@ -24,13 +24,10 @@ from keras.applications.vgg16 import VGG16
 from keras.models import Model
 from keras.layers import Dense, Input, Flatten, Dropout
 from keras.layers.normalization import BatchNormalization
-from sklearn.metrics import fbeta_score
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, History
 from keras.optimizers import Adam
-from PIL import Image
 from keras.preprocessing.image import ImageDataGenerator
 from keras.preprocessing import image
-import keras
 from sklearn.model_selection import train_test_split
 
 
@@ -58,6 +55,12 @@ def get_train_generator(batch_size, filenames, labels_df, train_jpeg_dir):
         instead of preprocessing them all at once and feeding them to the classifier.
         :param batch_size: int
             The batch size
+        :param filenames: Series
+            The list of train image filenames
+        :param labels_df: DataFrame
+            Training labels
+        :param train_jpeg_dir: str
+            Train directory path
         :return: generator
             The batch generator
         """
@@ -83,7 +86,6 @@ def get_train_generator(batch_size, filenames, labels_df, train_jpeg_dir):
                 batch_labels = np.zeros((range_offset, len(labels_df.columns)))
 
                 for j in range(range_offset):   
-                    # Maybe shuffle the index?
                     img_path = train_jpeg_dir + filenames.iloc[start_offset + j]
                     img = image.load_img(img_path, target_size=img_resize)
                     img = image.img_to_array(img)
@@ -110,6 +112,12 @@ def get_validation_generator(batch_size, filenames, labels_df, train_jpeg_dir):
         instead of preprocessing them all at once and feeding them to the classifier.
         :param batch_size: int
             The batch size
+        :param filenames: Series
+            The list of validation image filenames
+        :param labels_df: DataFrame
+            Validation labels
+        :param train_jpeg_dir: str
+            Validation directory path
         :return: generator
             The batch generator
         """
@@ -131,7 +139,6 @@ def get_validation_generator(batch_size, filenames, labels_df, train_jpeg_dir):
                 batch_labels = np.zeros((range_offset, len(labels_df.columns)))
 
                 for j in range(range_offset):   
-                    # Maybe shuffle the index?
                     img_path = train_jpeg_dir + filenames.iloc[start_offset + j]
                     img = image.load_img(img_path, target_size=img_resize)
                     img = image.img_to_array(img)
@@ -139,10 +146,56 @@ def get_validation_generator(batch_size, filenames, labels_df, train_jpeg_dir):
                     batch_features[j] = img
                     batch_labels[j] = labels_df.iloc[start_offset + j]
 
-                # Augment the images (using Keras allow us to add randomization/shuffle to augmented images)
                 # Here the next batch of the data generator (and only one for this iteration)
                 # is taken and returned in the yield statement
                 yield next(datagen.flow(batch_features, batch_labels, range_offset))
+                
+def get_prediction_generator(batch_size, test_filename, test_jpeg_dir):
+        """
+        Returns a batch generator which transforms chunk of raw images into numpy matrices
+        and then "yield" them for the classifier. Doing so allow to greatly optimize
+        memory usage as the images are processed then deleted by chunks (defined by batch_size)
+        instead of preprocessing them all at once and feeding them to the classifier.
+        :param batch_size: int
+            The batch size
+        :param test_filename: Series
+            The list of test image filenames
+        :param test_jpeg_dir: str
+            Test directory path
+        :return: generator
+            The batch generator
+        """
+
+        # NO SHUFFLE HERE as we need our predictions to be in the same order as the inputs
+        loop_range = len(test_filename)
+        while True:
+            for i in range(loop_range):
+                start_offset = batch_size * i
+
+                # The last remaining files could be smaller than the batch_size
+                range_offset = min(batch_size, loop_range - start_offset)
+
+                # If we reached the end of the list then we break the loop
+                if range_offset <= 0:
+                    break
+
+                img_arrays = np.zeros((range_offset, *img_resize, 3))
+
+                for j in range(range_offset):
+                    img_path = test_jpeg_dir + test_filename.iloc[start_offset + j]
+                    img = image.load_img(img_path, target_size=img_resize)
+                    img = image.img_to_array(img)
+
+
+                    img_array = img[:, :, ::-1]
+                    # Zero-center by mean pixel
+                    img_array[:, :, 0] -= 103.939
+                    img_array[:, :, 1] -= 116.779
+                    img_array[:, :, 2] -= 123.68
+                    img_array = img_array / 255
+
+                    img_arrays[j] = img_array
+                yield img_arrays
 
 def create_model(img_dim=(128, 128, 3)):
     input_tensor = Input(shape=img_dim)
@@ -177,11 +230,6 @@ model = create_model(img_dim=(128, 128, 3))
 model.summary()
 
 history = History()
-#callbacks = [history, 
-#             EarlyStopping(monitor='val_loss', patience=3, verbose=1, min_delta=1e-4),
-#             ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=1, cooldown=0, min_lr=1e-7, verbose=1),
-#             ModelCheckpoint(filepath='weights/weights.best.hdf5', verbose=1, 
-#             save_best_only=True, save_weights_only=True, mode='auto')]
 
 callbacks = [history, 
              EarlyStopping(monitor='val_loss', patience=3, verbose=1, min_delta=1e-4),
@@ -192,11 +240,21 @@ callbacks = [history,
 batch_size = 64
 train_generator = get_train_generator(batch_size, train_filenames, train_labels, train_jpeg_dir)
 val_generator = get_validation_generator(batch_size, val_filenames, val_labels, train_jpeg_dir)
-#steps = len(filenames) / batch_size
-steps = len(train_filenames) / 60
-val_steps = len(val_filenames) / 40
+steps = len(train_filenames) / batch_size
+val_steps = len(val_filenames) / batch_size
+#steps = len(train_filenames) / 60
+#val_steps = len(val_filenames) / 40
 
 
 model.compile(optimizer=Adam(lr=1e-4), loss='binary_crossentropy', metrics = ['accuracy'])
 
 history = model.fit_generator(train_generator, steps, epochs=200, verbose=1, validation_data=val_generator, validation_steps = val_steps, callbacks=callbacks)
+
+pred_generator = get_prediction_generator(batch_size, test_labels.Image_name, test_jpeg_dir)
+
+predictions_labels = model.predict_generator(generator=pred_generator, verbose=1, steps = len(test_labels) / batch_size)
+
+predictions_labels = np.round(predictions_labels)
+pred_df = pd.DataFrame(predictions_labels, columns=list(train_labels.columns))
+pred_df.insert(0, "Image_name", test_labels.Image_name)
+pred_df.to_csv("predictions_vgg16.csv", index = False)
