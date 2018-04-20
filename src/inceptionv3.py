@@ -1,13 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Apr 19 10:41:48 2018
-
-@author: Shreyans
-"""
-
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Apr 19 02:40:32 2018
+Created on Fri Apr 20 00:47:33 2018
 
 @author: Shreyans
 """
@@ -20,7 +13,7 @@ sys.path.append('../data/train_img')
 
 import numpy as np
 import pandas as pd
-from keras.applications.vgg16 import VGG16
+from keras.applications.inception_v3 import InceptionV3
 from keras.models import Model, load_model
 from keras.layers import Dense, Input, Flatten, Dropout
 from keras.layers.normalization import BatchNormalization
@@ -197,9 +190,9 @@ def get_prediction_generator(batch_size, test_filename, test_jpeg_dir):
                     img_arrays[j] = img_array
                 yield img_arrays
 
-def create_model(img_dim=(128, 128, 3)):
+def create_model(img_dim=(139, 139, 3)):
     input_tensor = Input(shape=img_dim)
-    base_model = VGG16(include_top=False,
+    base_model = InceptionV3(include_top=False,
                        weights='imagenet',
                        input_shape=img_dim)
     
@@ -223,10 +216,10 @@ test_labels = pd.read_csv(test_csv_file)
 train_labels, val_labels = train_test_split(labels_df, train_size = 0.8, random_state=42)
 train_filenames, val_filenames = train_test_split(filenames, train_size = 0.8, random_state=42)
 
-img_resize = (128, 128) # The resize size of each image ex: (64, 64) or None to use the default image size
+img_resize = (139, 139) # The resize size of each image ex: (64, 64) or None to use the default image size
 
 
-model = create_model(img_dim=(128, 128, 3))
+model = create_model(img_dim=(139, 139, 3))
 model.summary()
 
 history = History()
@@ -257,4 +250,4 @@ predictions_labels = model.predict_generator(generator=pred_generator, verbose=1
 predictions_labels = np.round(predictions_labels)
 pred_df = pd.DataFrame(predictions_labels, columns=list(train_labels.columns))
 pred_df.insert(0, "Image_name", test_labels.Image_name)
-pred_df.to_csv("predictions_vgg16.csv", index = False)
+pred_df.to_csv("predictions_inception.csv", index = False)
